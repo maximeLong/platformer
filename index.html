@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Platformer (Three.js port of Kenney Starter-Kit-3D-Platformer)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #6ec6ff; overflow: hidden; font-family: system-ui, sans-serif; color: #fff; }
+  #c { display: block; width: 100%; height: 100%; }
+  #hud { position: fixed; left: 24px; top: 18px; display: flex; align-items: center; gap: 10px;
+         font-size: 44px; font-weight: 800; text-shadow: 2px 2px 0 rgba(0,0,0,.35); pointer-events: none; }
+  #hud .icon { width: 44px; height: 44px; background: radial-gradient(circle at 35% 30%, #ffe27a, #f0a91a 70%, #b46a00);
+               border-radius: 50%; box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); }
+  #help { position: fixed; right: 16px; bottom: 12px; font: 13px/1.4 system-ui; opacity: .75; text-shadow: 1px 1px 0 rgba(0,0,0,.4); }
+  #loader { position: fixed; inset: 0; display: grid; place-items: center; background: #6ec6ff; font-size: 22px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="loader">Loading…</div>
+<canvas id="c"></canvas>
+<div id="hud"><span class="icon"></span>× <span id="coins">0</span></div>
+<div id="help">WASD move · Space jump (double-jump) · drag to rotate camera · scroll to zoom</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ---------- renderer / scene / camera ----------
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+
+const scene = new THREE.Scene();
+// Vertical gradient sky — pale cream at top, soft lavender near the horizon.
+function makeSkyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 256;
+  const g = c.getContext('2d').createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0.00, '#f3eef4');
+  g.addColorStop(0.55, '#cfd2ef');
+  g.addColorStop(1.00, '#a39ce0');
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+scene.background = makeSkyTexture();
+scene.fog = new THREE.Fog(0xcfd2ef, 50, 110);
+
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+camera.position.set(0, 8, 12);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  if (composer) composer.setSize(w, h);
+}
+
+// ---------- lights ----------
+scene.add(new THREE.HemisphereLight(0xfff2e8, 0x6a78a8, 0.85));
+const sun = new THREE.DirectionalLight(0xfff2c8, 1.1);
+sun.position.set(-15, 24, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
+sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
+sun.shadow.bias = -0.0008;
+scene.add(sun);
+
+// ---------- post-processing ----------
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.35, 0.6, 0.85);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+addEventListener('resize', resize); resize();
+
+// ---------- asset loading ----------
+const loader = new GLTFLoader();
+const ASSETS = [
+  'character', 'coin', 'block-coin', 'brick', 'brick-particle', 'cloud', 'dust', 'flag',
+  'grass', 'grass-small', 'platform', 'platform-medium', 'platform-large',
+  'platform-grass-large-round', 'platform-falling'
+];
+const cache = {};
+function load(name) {
+  return new Promise((res, rej) =>
+    loader.load(`models/${name}.glb`, g => { cache[name] = g; res(g); }, undefined, rej));
+}
+await Promise.all(ASSETS.map(load));
+
+function prepMesh(obj) {
+  obj.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+      // glTF materials sometimes come through with vertex colors that need decoding
+      if (o.material && o.material.map) {
+        // Kenney's colormap.png is a tiny palette atlas — nearest filtering keeps each
+        // cell crisp, and we mark it sRGB so the colors aren't washed out under tone-mapping.
+        o.material.map.colorSpace = THREE.SRGBColorSpace;
+        o.material.map.magFilter = THREE.NearestFilter;
+        o.material.map.minFilter = THREE.NearestFilter;
+        o.material.map.generateMipmaps = false;
+        o.material.map.needsUpdate = true;
+      }
+    }
+  });
+  return obj;
+}
+
+// Godot Transform3D: 9 basis numbers (col-major) + 3 origin numbers.
+// Returns a Matrix4. Godot and Three both use Y-up / -Z-forward, so direct mapping.
+function godot(a, b, c, d, e, f, g, h, i, ox, oy, oz) {
+  // basis cols: c0=(a,b,c), c1=(d,e,f), c2=(g,h,i)
+  return new THREE.Matrix4().set(
+    a, d, g, ox,
+    b, e, h, oy,
+    c, f, i, oz,
+    0, 0, 0, 1
+  );
+}
+
+// Spawn a fresh instance of a cached gltf scene at a Godot transform.
+function spawn(name, matrix, parent = scene) {
+  const src = cache[name].scene;
+  // Clone with skeleton support for animated meshes (character).
+  const inst = name === 'character' ? cloneSkeleton(src) : src.clone(true);
+  prepMesh(inst);
+  inst.applyMatrix4(matrix);
+  parent.add(inst);
+  return inst;
+}
+
+// Compute world AABB of an object hierarchy (after it's been placed).
+function worldAABB(obj) {
+  obj.updateMatrixWorld(true);
+  return new THREE.Box3().setFromObject(obj);
+}
+
+// ---------- level (positions extracted from scenes/main.tscn) ----------
+const colliders = [];   // { box: Box3, kind: 'static'|'falling', owner }
+const coins = [];
+const bricks = [];
+const fallingPlatforms = [];
+const clouds = [];
+
+function addStatic(obj) {
+  const box = worldAABB(obj);
+  colliders.push({ box, kind: 'static', owner: obj });
+}
+
+// platforms
+const plats = [
+  ['platform', godot(0.993085, 0, -0.117399, 0, 1, 0, 0.117399, 0, 0.993085, 0, 0, 0)],
+  ['platform', godot(0.993085, 0, -0.117399, 0, 1, 0, 0.117399, 0, 0.993085, -15, 0, 4)],
+  ['platform', godot(0.993085, 0, -0.117399, 0, 1, 0, 0.117399, 0, 0.993085, -21.925076, 0.3466103, -2.6836262)],
+  ['platform', godot(0.9779442, 0, 0.20886743, 0, 1, 0, -0.20886743, 0, 0.9779442, -22.07586, 1.5132568, -4.765484)],
+  ['platform', godot(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 2, -3)],
+  ['platform', godot(0.966237, 0, -0.257656, 0, 1, 0, 0.257656, 0, 0.966237, -3, 3, -5)],
+  ['platform-medium', godot(0.996134, 0, 0.0878512, 0, 1, 0, -0.0878512, 0, 0.996134, -3, 0, 0)],
+  ['platform-medium', godot(0.995121, 0, 0.0986598, 0, 1, 0, -0.0986598, 0, 0.995121, -5, 0, 4)],
+  ['platform-medium', godot(0.929796, 0, -0.368076, 0, 1, 0, 0.368076, 0, 0.929796, -14.9422, 0.991941, 0.128304)],
+  ['platform-medium', godot(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, -6)],
+  ['platform-grass-large-round', godot(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 1, -2)],
+  ['platform-grass-large-round', godot(1, 0, 0, 0, 1, 0, 0, 0, 1, -19.31048, 1, 2.8319645)],
+];
+for (const [n, m] of plats) addStatic(spawn(n, m));
+
+// falling platforms
+const fps = [
+  godot(0.984808, 0, 0.173648, 0, 1, 0, -0.173648, 0, 0.984808, -9, 0.419294, 4),
+  godot(0.994522, 0, -0.104528, 0, 1, 0, 0.104528, 0, 0.994522, -12, -0.315063, 4),
+  godot(0.939693, 0, 0.34202, 0, 1, 0, -0.34202, 0, 0.939693, -11.7527, 1.8303, -2.30579),
+];
+for (const m of fps) {
+  const obj = spawn('platform-falling', m);
+  const box = worldAABB(obj);
+  const entry = { obj, box, kind: 'falling', startY: obj.position.y, falling: false, vy: 0, ttl: -1 };
+  colliders.push({ box, kind: 'falling', owner: entry });
+  fallingPlatforms.push(entry);
+}
+
+// flag
+spawn('flag', godot(0.707107, 0, -0.707107, 0, 1, 0, 0.707107, 0, 0.707107, 0, 3.48077, -6));
+
+// bricks
+const brickXforms = [
+  godot(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.119135, 1.9857206, -0.08861771),
+  godot(0.8552648, 0, -0.5181912, 0, 1, 0, 0.5181912, 0, 0.8552648, -6.7635055, 3.2150104, -2.0195704),
+  godot(0.93908226, 0, 0.34369248, 0, 1, 0, -0.34369248, 0, 0.93908226, -19.034018, 3.215011, 2.869449),
+];
+for (const m of brickXforms) {
+  const obj = spawn('brick', m);
+  const box = worldAABB(obj).expandByScalar(-0.02);
+  const entry = { obj, box, broken: false, breakAt: 0 };
+  bricks.push(entry);
+  colliders.push({ box, kind: 'brick', owner: entry });
+}
+
+// coins
+const coinPositions = [
+  [-3, 0.635, 0],
+  [-5, 0.635, 4],
+  [-7.0437, 1.97005, -0.33003],
+  [-7.0437, 1.97005, -1.33003],
+  [-11.7731, 2.54941, -2.28223],
+  [-14.8111, 1.6888, 0.328574],
+  [-14.8111, 2.6888, 0.328574],
+  [-14.9647, 0.801836, 3.99354],
+  [0, 5, -6],
+  [-7.0437, 1.97005, -2.33003],
+  [-6.7093306, 5.3392777, -2.0042212],
+  [-18.979, 1.7754431, 2.8622048],
+  [-22.11739, 2.56071, -4.7569985],
+  [-22.11739, 3.320589, -4.7569985],
+];
+for (const [x, y, z] of coinPositions) {
+  const obj = cache['coin'].scene.clone(true);
+  prepMesh(obj);
+  obj.position.set(x, y, z);
+  scene.add(obj);
+  coins.push({ obj, basePos: new THREE.Vector3(x, y, z), t: Math.random() * 6, grabbed: false });
+}
+
+// clouds (decorative, but I want them in the air, not in collision)
+const cloudXforms = [
+  godot(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5495, 1.10741, -2.666),
+  godot(1.27593, -0.401864, 0.422933, 0.471408, 1.30937, -0.178025, -0.343721, 0.304009, 1.32582, 3.33538, 1.37146, -4.1932),
+  godot(1.32811, 0.370441, 0.259369, -0.293866, 1.3186, -0.37854, -0.34372, 0.30401, 1.32582, -10.5752, 2.03819, -7.93707),
+  godot(0.476646, 0.924607, 0.941422, -0.929853, 0.945559, -0.457882, -0.93624, -0.468385, 0.934042, -9.467535, 2.0381904, 11.509415),
+  godot(-1.02876, -0.695523, 0.652886, -0.929853, 0.945557, -0.457881, -0.213027, -0.768461, -1.15432, -9.201835, 2.7950804, 13.743215),
+  godot(1.56209, -1.37982, 1.71508, 1.97375, 1.80907, -0.342241, -0.974547, 1.4522, 2.05595, -14.3045, 2.03819, -8.24191),
+  godot(1.56209, -1.37982, 1.71508, 1.97375, 1.80907, -0.342241, -0.974547, 1.4522, 2.05595, -14.152035, 2.0381904, 10.065234),
+];
+for (const m of cloudXforms) {
+  const obj = spawn('cloud', m);
+  // Lift clouds well above the play space so they don't visually clutter the platforms.
+  obj.position.y += 6;
+  clouds.push({ obj, baseY: obj.position.y, t: Math.random() * 6,
+                vel: 0.1 + Math.random() * 1.9, freq: 0.1 + Math.random() * 1.9 });
+}
+
+// ---------- player ----------
+const playerGroup = new THREE.Group();
+playerGroup.position.set(0, 1.5, 0);
+scene.add(playerGroup);
+const character = cloneSkeleton(cache['character'].scene);
+prepMesh(character);
+playerGroup.add(character);
+
+// Measure the character so the player AABB matches the rendered mesh (feet at the AABB bottom).
+playerGroup.updateMatrixWorld(true);
+const charBox = new THREE.Box3().setFromObject(character);
+const charSize = charBox.getSize(new THREE.Vector3());
+// Drop the model so its feet sit at playerGroup.position (regardless of Kenney's rig pivot).
+character.position.y -= charBox.min.y - playerGroup.position.y;
+
+// Build AnimationMixer from the cached gltf, retargeting to the cloned skeleton.
+const mixer = new THREE.AnimationMixer(character);
+const clips = cache['character'].animations;
+const actions = {};
+for (const c of clips) actions[c.name.toLowerCase()] = mixer.clipAction(c);
+let currentAction = null;
+function playAnim(name) {
+  const a = actions[name] || actions[Object.keys(actions)[0]];
+  if (!a || a === currentAction) return;
+  if (currentAction) currentAction.fadeOut(0.15);
+  a.reset().fadeIn(0.15).play();
+  currentAction = a;
+}
+// Best-effort: most Kenney rigs name clips "idle"/"walk"/"jump", but if not, just pick one.
+playAnim('idle');
+
+// ---------- dust trail ----------
+// Pool of puffs that we recycle. Each one is a clone of dust.glb that we keep parented
+// to the scene; emitting just resets its transform and life.
+const DUST_POOL = 24;
+const dust = [];
+{
+  const proto = cache['dust'].scene;
+  for (let i = 0; i < DUST_POOL; i++) {
+    const obj = proto.clone(true);
+    obj.traverse(o => {
+      if (o.isMesh) {
+        // Clone material per instance so we can fade opacity independently.
+        o.material = o.material.clone();
+        o.material.transparent = true;
+        o.material.depthWrite = false;
+        o.castShadow = false;
+        o.receiveShadow = false;
+        if (o.material.map) {
+          o.material.map.colorSpace = THREE.SRGBColorSpace;
+          o.material.map.magFilter = THREE.NearestFilter;
+          o.material.map.minFilter = THREE.NearestFilter;
+        }
+      }
+    });
+    obj.visible = false;
+    scene.add(obj);
+    dust.push({ obj, life: 0, maxLife: 0 });
+  }
+}
+let dustNext = 0;
+let dustCooldown = 0;
+function emitDust(pos, baseScale = 1) {
+  const p = dust[dustNext];
+  dustNext = (dustNext + 1) % DUST_POOL;
+  p.obj.position.copy(pos);
+  p.obj.position.y += 0.05;
+  p.obj.rotation.y = Math.random() * Math.PI * 2;
+  const s = baseScale * (0.35 + Math.random() * 0.2);
+  p.obj.scale.setScalar(s);
+  p.startScale = s;
+  p.life = 0;
+  p.maxLife = 0.45;
+  p.obj.visible = true;
+  p.obj.traverse(o => { if (o.isMesh) o.material.opacity = 0.9; });
+}
+function updateDust(dt) {
+  for (const p of dust) {
+    if (!p.obj.visible) continue;
+    p.life += dt;
+    const t = p.life / p.maxLife;
+    if (t >= 1) { p.obj.visible = false; continue; }
+    const s = p.startScale * (1 + t * 1.4);
+    p.obj.scale.setScalar(s);
+    p.obj.position.y += dt * 0.5;        // gentle rise
+    const opacity = (1 - t) * 0.9;
+    p.obj.traverse(o => { if (o.isMesh) o.material.opacity = opacity; });
+  }
+}
+
+// Player AABB sized to the character's measured bounds. The box anchors at the FEET:
+// pos.y is the AABB bottom (and also the model's feet), pos.y + height is the head.
+const PLAYER = {
+  half: Math.max(charSize.x, charSize.z) * 0.5 * 0.7,  // narrow a bit so we squeeze between platforms
+  height: charSize.y,
+};
+const vel = new THREE.Vector3();
+let gravity = 0;
+let jumpSingle = true, jumpDouble = true;
+let onFloor = false;
+let prevFloor = false;
+let coinsCollected = 0;
+let facing = 0;     // rotation around Y, in radians (smoothed)
+let facingTarget = 0;
+const modelScale = new THREE.Vector3(1, 1, 1);
+const targetModelScale = new THREE.Vector3(1, 1, 1);
+
+const MOVE_SPEED = 6.5;     // m/s
+const JUMP_STRENGTH = 9;    // initial upward speed
+const GRAV = 25;            // m/s^2
+
+const SPAWN = playerGroup.position.clone();
+
+// ---------- input ----------
+const keys = new Set();
+addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' && tryJump()) e.preventDefault(); });
+addEventListener('keyup',   e => keys.delete(e.code));
+
+function axis(neg, pos) { return (keys.has(pos) ? 1 : 0) - (keys.has(neg) ? 1 : 0); }
+function tryJump() {
+  if (jumpSingle || jumpDouble) {
+    if (jumpSingle) { jumpSingle = false; jumpDouble = true; }
+    else { jumpDouble = false; }
+    gravity = -JUMP_STRENGTH;
+    targetModelScale.set(0.5, 1.5, 0.5);
+    return true;
+  }
+  return false;
+}
+
+// ---------- camera (orbit around player) ----------
+let camYaw = Math.PI * 0.25;      // around Y
+let camPitch = -0.5;              // looking down
+let camYawTarget = camYaw;
+let camPitchTarget = camPitch;
+let camZoom = 10, camZoomTarget = 10;
+const CAM = { dragSpeed: 0.006, zoomSpeed: 12, zoomMin: 4, zoomMax: 18, pitchMin: -1.4, pitchMax: -0.17 };
+
+// Mouse drag → orbit; wheel → zoom.
+let _dragId = null;
+canvas.addEventListener('pointerdown', e => {
+  if (_dragId !== null) return;
+  _dragId = e.pointerId;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId !== _dragId) return;
+  camYawTarget   -= e.movementX * CAM.dragSpeed;
+  camPitchTarget -= e.movementY * CAM.dragSpeed;
+  camPitchTarget = THREE.MathUtils.clamp(camPitchTarget, CAM.pitchMin, CAM.pitchMax);
+});
+const endDrag = e => { if (e.pointerId === _dragId) _dragId = null; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  camZoomTarget = THREE.MathUtils.clamp(camZoomTarget + e.deltaY * 0.01, CAM.zoomMin, CAM.zoomMax);
+}, { passive: false });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+function updateCamera(dt) {
+  if (keys.has('Equal') || keys.has('NumpadAdd')) camZoomTarget -= CAM.zoomSpeed * dt;
+  if (keys.has('Minus') || keys.has('NumpadSubtract')) camZoomTarget += CAM.zoomSpeed * dt;
+  camZoomTarget = THREE.MathUtils.clamp(camZoomTarget, CAM.zoomMin, CAM.zoomMax);
+
+  camYaw   += (camYawTarget - camYaw)     * Math.min(1, dt * 6);
+  camPitch += (camPitchTarget - camPitch) * Math.min(1, dt * 6);
+  camZoom  += (camZoomTarget - camZoom)   * Math.min(1, dt * 8);
+
+  // spherical → cartesian, around the player
+  const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+  const cy = Math.cos(camYaw),   sy = Math.sin(camYaw);
+  const offset = new THREE.Vector3(sy * cp, -sp, cy * cp).multiplyScalar(camZoom);
+  const target = playerGroup.position.clone().add(new THREE.Vector3(0, PLAYER.height * 0.5, 0));
+  camera.position.lerp(target.clone().add(offset), Math.min(1, dt * 8));
+  camera.lookAt(target);
+}
+
+// ---------- physics ----------
+// Per-axis AABB collision. Tricky bit: Box3.intersectsBox is true on a touching boundary
+// (player feet exactly at platform top), so a pure-X move while standing on a platform
+// would otherwise see "I'm overlapping" and shove the player horizontally by the full
+// platform width. We guard against that by requiring meaningful penetration (> EPS) on
+// the OTHER two axes before resolving on the requested axis.
+const tmpBox = new THREE.Box3();
+const PENETRATION_EPS = 1e-3;
+function playerBox(pos) {
+  return tmpBox.set(
+    new THREE.Vector3(pos.x - PLAYER.half, pos.y,                pos.z - PLAYER.half),
+    new THREE.Vector3(pos.x + PLAYER.half, pos.y + PLAYER.height, pos.z + PLAYER.half),
+  );
+}
+const OTHER_AXES = { x: ['y', 'z'], y: ['x', 'z'], z: ['x', 'y'] };
+
+function moveAxis(axisName, delta) {
+  if (delta === 0) return false;
+  const pos = playerGroup.position;
+  pos[axisName] += delta;
+  let hit = false;
+  const others = OTHER_AXES[axisName];
+  for (const c of colliders) {
+    if (c.kind === 'brick' && c.owner.broken) continue;
+    if (c.kind === 'falling' && c.owner.obj.position.y < -8) continue;
+    const pb = playerBox(pos);
+    if (!pb.intersectsBox(c.box)) continue;
+
+    // Skip if we're only touching (zero or near-zero overlap) on either of the other axes.
+    let touching = false;
+    for (const ax of others) {
+      const overlap = Math.min(pb.max[ax], c.box.max[ax]) - Math.max(pb.min[ax], c.box.min[ax]);
+      if (overlap <= PENETRATION_EPS) { touching = true; break; }
+    }
+    if (touching) continue;
+
+    if (delta > 0) {
+      pos[axisName] -= (pb.max[axisName] - c.box.min[axisName]);
+    } else {
+      pos[axisName] += (c.box.max[axisName] - pb.min[axisName]);
+    }
+    hit = true;
+
+    if (axisName === 'y') {
+      if (delta > 0 && c.kind === 'brick' && !c.owner.broken) breakBrick(c.owner);
+      else if (delta < 0 && c.kind === 'falling' && !c.owner.falling) startFalling(c.owner);
+    }
+  }
+  return hit;
+}
+
+function startFalling(fp) {
+  fp.falling = true;
+  fp.vy = 0;
+  fp.obj.scale.set(1.25, 1, 1.25);
+  fp.ttl = 0.45;  // delay before it actually drops, like the original
+}
+
+function breakBrick(b) {
+  b.broken = true;
+  b.obj.visible = false;
+}
+
+// ---------- per-frame update ----------
+function updatePlayer(dt) {
+  // movement input in camera-relative space
+  const ix = axis('KeyA', 'KeyD');
+  const iz = axis('KeyW', 'KeyS');
+  let input = new THREE.Vector3(ix, 0, iz);
+  if (input.lengthSq() > 1) input.normalize();
+  input.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
+
+  // horizontal velocity directly from input (Godot did `velocity.lerp(target, dt*10)`)
+  const targetVx = input.x * MOVE_SPEED;
+  const targetVz = input.z * MOVE_SPEED;
+  vel.x += (targetVx - vel.x) * Math.min(1, dt * 10);
+  vel.z += (targetVz - vel.z) * Math.min(1, dt * 10);
+
+  // gravity
+  gravity += GRAV * dt;
+  vel.y = -gravity;
+
+  // resolve per-axis
+  moveAxis('x', vel.x * dt);
+  moveAxis('z', vel.z * dt);
+  const hitY = moveAxis('y', vel.y * dt);
+  if (hitY) {
+    if (vel.y < 0) {
+      // landed
+      onFloor = true;
+      if (gravity > 2 && !prevFloor) targetModelScale.set(1.25, 0.75, 1.25);
+      jumpSingle = true;
+      gravity = 0;
+    } else {
+      // bonked head — kill upward velocity
+      gravity = 0;
+      vel.y = 0;
+    }
+  } else {
+    onFloor = false;
+  }
+  const wasOnFloor = prevFloor;
+  prevFloor = onFloor;
+
+  // face movement direction
+  const hSpeed = Math.hypot(vel.x, vel.z);
+  if (hSpeed > 0.5) facingTarget = Math.atan2(vel.x, vel.z);
+  // shortest-path lerp on angle
+  let d = ((facingTarget - facing + Math.PI) % (Math.PI * 2)) - Math.PI;
+  facing += d * Math.min(1, dt * 10);
+  character.rotation.y = facing;
+
+  // scale ease
+  modelScale.lerp(targetModelScale, Math.min(1, dt * 10));
+  targetModelScale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 10));
+  character.scale.copy(modelScale);
+
+  // animation selection (best-effort name match)
+  if (!onFloor) playAnim('jump');
+  else if (hSpeed > 0.5) playAnim('walk');
+  else playAnim('idle');
+
+  // dust trail: emit small puffs at the feet while running on the ground
+  dustCooldown -= dt;
+  if (onFloor && hSpeed > 2.5 && dustCooldown <= 0) {
+    emitDust(playerGroup.position, 1);
+    dustCooldown = 0.08;
+  }
+  // landing puff: a bigger burst on the frame we touch down
+  if (onFloor && !wasOnFloor) {
+    for (let i = 0; i < 3; i++) emitDust(playerGroup.position, 1.4);
+  }
+
+  // fall out → respawn
+  if (playerGroup.position.y < -10) respawn();
+}
+
+function respawn() {
+  playerGroup.position.copy(SPAWN);
+  vel.set(0, 0, 0); gravity = 0;
+  jumpSingle = true; jumpDouble = true;
+  // also restore falling platforms & bricks & coins
+  for (const fp of fallingPlatforms) {
+    fp.falling = false; fp.vy = 0; fp.ttl = -1;
+    fp.obj.position.y = fp.startY;
+    fp.obj.scale.set(1, 1, 1);
+    fp.box.setFromObject(fp.obj);
+  }
+  for (const b of bricks) { b.broken = false; b.obj.visible = true; }
+  for (const c of coins) { c.grabbed = false; c.obj.visible = true; }
+  coinsCollected = 0;
+  document.getElementById('coins').textContent = '0';
+}
+
+const _playerCenter = new THREE.Vector3();
+function updateCoins(dt) {
+  _playerCenter.copy(playerGroup.position).y += PLAYER.height * 0.5;
+  for (const c of coins) {
+    if (c.grabbed) continue;
+    c.t += dt;
+    c.obj.rotation.y += 2 * dt;
+    c.obj.position.y = c.basePos.y + Math.sin(c.t * 5) * 0.1;
+    if (_playerCenter.distanceTo(c.obj.position) < 0.9) {
+      c.grabbed = true;
+      c.obj.visible = false;
+      coinsCollected++;
+      document.getElementById('coins').textContent = String(coinsCollected);
+    }
+  }
+}
+
+function updateFalling(dt) {
+  for (const fp of fallingPlatforms) {
+    // scale ease toward identity
+    fp.obj.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 10));
+    if (fp.falling) {
+      if (fp.ttl > 0) { fp.ttl -= dt; continue; }
+      fp.vy += 15 * dt;
+      fp.obj.position.y -= fp.vy * dt;
+      // keep AABB in sync
+      fp.box.setFromObject(fp.obj);
+    }
+  }
+}
+
+function updateClouds(dt) {
+  for (const c of clouds) {
+    c.t += dt;
+    c.obj.position.y = c.baseY + Math.cos(c.t * c.freq) * c.vel;
+  }
+}
+
+// ---------- loop ----------
+const clock = new THREE.Clock();
+document.getElementById('loader').remove();
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  updatePlayer(dt);
+  updateCoins(dt);
+  updateFalling(dt);
+  updateClouds(dt);
+  updateDust(dt);
+  updateCamera(dt);
+  mixer.update(dt);
+  composer.render();
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
