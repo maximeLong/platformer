@@ -17,8 +17,10 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "https://unpkg.com/three@0.185.0/build/three.webgpu.js",
+    "three/webgpu": "https://unpkg.com/three@0.185.0/build/three.webgpu.js",
+    "three/tsl": "https://unpkg.com/three@0.185.0/build/three.tsl.js",
+    "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/"
   }
 }
 </script>
@@ -30,23 +32,28 @@
 <div id="help">WASD move · Space jump (double-jump) · drag to rotate camera · scroll to zoom</div>
 
 <script type="module">
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { pass, mrt, output, normalView, metalness, roughness,
+         packNormalToRGB, unpackRGBToNormal, vec2, sample, mix, float, uniform } from 'three/tsl';
+import { ao } from 'three/addons/tsl/display/GTAONode.js';
+import { ssr } from 'three/addons/tsl/display/SSRNode.js';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
 // ---------- renderer / scene / camera ----------
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+// WebGPU renderer. Falls back to a WebGL2 backend automatically when the browser
+// has no navigator.gpu, so the page still renders everywhere.
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;   // soft (PCF-filtered) shadows
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.0;
+await renderer.init();
 
 const scene = new THREE.Scene();
 // Vertical gradient sky — pale cream at top, soft lavender near the horizon.
@@ -74,15 +81,15 @@ camera.position.set(0, 8, 12);
 
 function resize() {
   const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
+  renderer.setSize(w, h, false);   // the node pass auto-resizes with the renderer
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  if (composer) composer.setSize(w, h);
 }
 
 // ---------- lights ----------
-scene.add(new THREE.HemisphereLight(0xfff2e8, 0x6a78a8, 0.85));
-const sun = new THREE.DirectionalLight(0xfff2c8, 1.1);
+const hemi = new THREE.HemisphereLight(0xfff2e8, 0x6a78a8, 1.35);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2c8, 1.35);
 sun.position.set(-15, 24, 12);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -90,15 +97,88 @@ sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
 sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
 sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
 sun.shadow.bias = -0.0008;
+sun.shadow.radius = 10;      // PCF blur kernel → soft shadow edges
 scene.add(sun);
 
-// ---------- post-processing ----------
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.35, 0.6, 0.85);
-composer.addPass(bloom);
-composer.addPass(new OutputPass());
+// ---------- post-processing (WebGPU node pipeline) ----------
+// One scene pass with a multi-render-target: the lit color plus the G-buffer
+// (view-space normals + packed metalness/roughness) that the screen-space
+// effects below read back. Depth comes for free from the pass.
+const scenePass = pass(scene, camera);
+scenePass.setMRT(mrt({
+  output,
+  normal: packNormalToRGB(normalView),
+  metalrough: vec2(metalness, roughness),
+}));
+
+const scenePassColor      = scenePass.getTextureNode('output');
+const scenePassDepth      = scenePass.getTextureNode('depth');
+const scenePassNormal     = scenePass.getTextureNode('normal');
+const scenePassMetalRough = scenePass.getTextureNode('metalrough');
+
+// The G-buffer aux targets don't need float precision — 8-bit saves bandwidth.
+scenePass.getTexture('normal').type = THREE.UnsignedByteType;
+scenePass.getTexture('metalrough').type = THREE.UnsignedByteType;
+
+// World/view-space normals decoded from the packed RGB attachment.
+const sceneNormal = sample((uv) => unpackRGBToNormal(scenePassNormal.sample(uv)));
+
+// GTAO — ground-truth screen-space ambient occlusion for contact shadows.
+const aoPass = ao(scenePassDepth, sceneNormal, camera);
+aoPass.radius.value = 0.3;
+aoPass.distanceExponent.value = 1;
+aoPass.thickness.value = 2;
+aoPass.samples.value = 20;
+
+// Screen-space reflections off glossy / metallic surfaces.
+const ssrPass = ssr(scenePassColor, scenePassDepth, sceneNormal, {
+  metalnessNode: scenePassMetalRough.r,
+  roughnessNode: scenePassMetalRough.g,
+});
+ssrPass.maxDistance.value = 3;
+ssrPass.intensity.value = 0.41;
+ssrPass.thickness.value = 0;
+
+// Compose: beauty × AO + reflections, then bloom on the result, SMAA to resolve.
+// aoStrength is a live uniform so the GUI can dial occlusion from 0 (off) to 2.
+const aoStrength = uniform(0.75);
+const litColor  = scenePassColor.mul(mix(float(1), aoPass.r, aoStrength)).add(ssrPass.rgb);
+const bloomPass = bloom(litColor, 0.5, 0.6, 0.8);   // (strength, radius, threshold)
+
+const renderPipeline = new THREE.RenderPipeline(renderer);
+renderPipeline.outputNode = smaa(litColor.add(bloomPass));
+
 addEventListener('resize', resize); resize();
+
+// ---------- debug GUI (lil-gui) ----------
+// Live controls for the lighting/post stack. Effects are driven through their node
+// uniforms, so nothing here rebuilds the pipeline — changes apply on the next frame.
+const gui = new GUI({ title: 'Lighting / Post' });
+
+const fLight = gui.addFolder('Lighting');
+fLight.add(renderer, 'toneMappingExposure', 0, 2, 0.01).name('exposure');
+fLight.add(sun, 'intensity', 0, 4, 0.05).name('sun');
+fLight.add(hemi, 'intensity', 0, 2, 0.05).name('hemisphere (ambient)');
+fLight.add(sun.shadow, 'radius', 0, 16, 0.5).name('shadow softness');
+
+const fAO = gui.addFolder('Ambient occlusion (GTAO)');
+fAO.add(aoStrength, 'value', 0, 2, 0.01).name('strength');
+fAO.add(aoPass.radius, 'value', 0, 2, 0.01).name('radius');
+fAO.add(aoPass.thickness, 'value', 0, 2, 0.01).name('thickness');
+fAO.add(aoPass.distanceExponent, 'value', 1, 4, 0.1).name('falloff exponent');
+fAO.add(aoPass.samples, 'value', 4, 32, 1).name('samples');
+
+const fSSR = gui.addFolder('Reflections (SSR)');
+fSSR.add(ssrPass.intensity, 'value', 0, 1, 0.01).name('intensity');
+fSSR.add(ssrPass.maxDistance, 'value', 0, 3, 0.01).name('max distance');
+fSSR.add(ssrPass.thickness, 'value', 0, 0.2, 0.001).name('thickness');
+
+const fBloom = gui.addFolder('Bloom');
+fBloom.add(bloomPass.strength, 'value', 0, 3, 0.01).name('strength');
+fBloom.add(bloomPass.radius, 'value', 0, 1, 0.01).name('radius');
+fBloom.add(bloomPass.threshold, 'value', 0, 1, 0.01).name('threshold');
+
+gui.close();   // start collapsed so it doesn't cover the scene
 
 // ---------- asset loading ----------
 const loader = new GLTFLoader();
@@ -243,6 +323,13 @@ const coinPositions = [
 for (const [x, y, z] of coinPositions) {
   const obj = cache['coin'].scene.clone(true);
   prepMesh(obj);
+  // Warm self-illumination so the coins read as glowing under bloom.
+  obj.traverse(o => {
+    if (o.isMesh && o.material) {
+      o.material.emissive = new THREE.Color(0xffb020);
+      o.material.emissiveIntensity = 0.6;
+    }
+  });
   obj.position.set(x, y, z);
   scene.add(obj);
   coins.push({ obj, basePos: new THREE.Vector3(x, y, z), t: Math.random() * 6, grabbed: false });
@@ -637,10 +724,11 @@ function updateClouds(dt) {
 }
 
 // ---------- loop ----------
-const clock = new THREE.Clock();
+const timer = new THREE.Timer();
 document.getElementById('loader').remove();
 function frame() {
-  const dt = Math.min(0.05, clock.getDelta());
+  timer.update();
+  const dt = Math.min(0.05, timer.getDelta());
   updatePlayer(dt);
   updateCoins(dt);
   updateFalling(dt);
@@ -648,7 +736,7 @@ function frame() {
   updateDust(dt);
   updateCamera(dt);
   mixer.update(dt);
-  composer.render();
+  renderPipeline.render();
   requestAnimationFrame(frame);
 }
 frame();

@@ -4,6 +4,18 @@
     {
       "date": 1782567926,
       "summary": "starting point - converted from godot project"
+    },
+    {
+      "date": 1782569054,
+      "summary": "modern lighting engine: ported renderer to WebGPU + TSL with a node-based post pipeline (GTAO ambient occlusion, screen-space reflections, full-scene bloom, SMAA), PCF soft shadows, and emissive coins. Pinned three.js to 0.185.0."
+    },
+    {
+      "date": 1782570127,
+      "summary": "added a lil-gui debug panel for live control of lighting and post (exposure, sun/hemisphere intensity, shadow softness, GTAO, SSR, bloom); AO intensity exposed as a uniform. Replaced deprecated THREE.Clock with THREE.Timer. three.js already on latest (0.185.0)."
+    },
+    {
+      "date": 1782570212,
+      "summary": "baked hand-tuned lighting/post defaults from the GUI: exposure 1.0, sun 1.35, hemisphere 1.35, shadow softness 10; GTAO strength 0.75 / radius 0.3 / thickness 2 / samples 20; SSR intensity 0.41 / maxDistance 3 / thickness 0; bloom radius 0.6."
     }
   ]
 }
