@@ -31,6 +31,15 @@
                      transition: transform .14s cubic-bezier(.34,1.7,.5,1); }
   #swatches button:hover { transform: scale(1.2) translateY(-2px); }
   #swatches button.sel { transform: scale(1.4) translateY(-3px); }
+  #emojiBtn { width: 38px; height: 38px; padding: 0; border-radius: 9px; cursor: pointer; font-size: 22px; line-height: 1;
+              border: 3px solid #1c2540; background: #e9f6ff; }
+  #emojiBtn:hover { background: #fff; }
+  #emojiPicker { position: absolute; bottom: 75px; right: 0; z-index: 12; width: 352px; height: 400px;
+                 border: 3px solid #1c2540; border-radius: 14px; box-shadow: 4px 5px 0 #000000b5; overflow: hidden;
+                 --background: #fff; --border-color: transparent; --border-radius: 12px;
+                 --indicator-color: #7a4cff; --button-active-background: #e9f6ff;
+                 --input-border-color: #1c2540; --input-font-color: #1c2540; --num-columns: 8; }
+  #emojiPicker[hidden] { display: none; }
   /* floating name tags — magenta pill, navy outline, downward pointer */
   .nametag { position: relative; font: 800 11px/1 inherit; color: #fff; white-space: nowrap; pointer-events: none;
              padding: 5px 11px; border-radius: 999px; letter-spacing: .2px;
@@ -78,7 +87,8 @@
     "three/tsl": "https://unpkg.com/three@0.185.0/build/three.tsl.js",
     "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/",
     "colyseus.js": "https://esm.sh/colyseus.js@0.16.22",
-    "@instantdb/core": "https://esm.sh/@instantdb/core@1.0.49"
+    "@instantdb/core": "https://esm.sh/@instantdb/core@1.0.49",
+    "emoji-picker-element": "https://esm.sh/emoji-picker-element@1.29.1"
   }
 }
 </script>
@@ -91,6 +101,8 @@
 <div id="identity">
   <input id="nameInput" type="text" maxlength="16" placeholder="Your name" />
   <div id="swatches"></div>
+  <button id="emojiBtn" title="Pick a face">🙂</button>
+  <emoji-picker id="emojiPicker" hidden></emoji-picker>
 </div>
 <button id="lbToggle"><svg class="crown" viewBox="0 0 32 28" aria-hidden="true"><path d="M4 23 L3 9 L11 16 L16 6 L21 16 L29 9 L28 23 Z" fill="#fff" stroke="#1c2540" stroke-width="2.5" stroke-linejoin="round"/><path d="M16 1.5 V5 M8.5 3.5 L10.5 6.5 M23.5 3.5 L21.5 6.5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>Leaderboard</button>
 <div id="leaderboard" hidden>
@@ -111,6 +123,7 @@ import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import { init as instantInit, id as instantId } from '@instantdb/core';
+import 'emoji-picker-element';   // registers the <emoji-picker> web component
 
 // ---------- renderer / scene / camera ----------
 const canvas = document.getElementById('c');
@@ -283,9 +296,11 @@ function makeRecoloredColormap(colorHex) {
   const REF = 232;   // brightest suit-purple channel value = shading reference
   for (let i = 0; i < d.length; i += 4) {
     const r = d[i], g = d[i + 1], b = d[i + 2];
-    if (b > r && r > g && (b - g) > 60) {
+    if (b > r && r > g && (b - g) > 60) {                       // suit purple -> chosen color
       const f = Math.min(1, Math.max(r, g, b) / REF);
       d[i] = tr * f; d[i + 1] = tg * f; d[i + 2] = tb * f;
+    } else if (r > 235 && g >= 150 && g <= 215 && b < 120) {    // gold face plate -> black (the emoji renders on top)
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -574,7 +589,7 @@ const SPAWN = playerGroup.position.clone();
 // ---------- input ----------
 const keys = new Set();
 // Ignore game input while typing in a text field (e.g. the name picker).
-const typing = e => e.target instanceof HTMLInputElement;
+const typing = e => e.target instanceof HTMLInputElement || e.target.tagName === 'EMOJI-PICKER';
 addEventListener('keydown', e => { if (typing(e)) return; keys.add(e.code); if (e.code === 'Space' && tryJump()) e.preventDefault(); });
 addEventListener('keyup',   e => { if (typing(e)) return; keys.delete(e.code); });
 
@@ -846,6 +861,7 @@ const SERVER_URL = isLocalHost ? `ws://${location.hostname}:2567` : RENDER_WS_UR
 const PALETTE = [0x8a5cff, 0xff5c7a, 0xffb020, 0x33d17a, 0x29b6f6, 0xff6e3a, 0xb86bff, 0xffffff];
 let myName = localStorage.getItem('pf_name') || ('Player-' + Math.floor(Math.random() * 1000));
 let myColor = Number(localStorage.getItem('pf_color')) || PALETTE[Math.floor(Math.random() * PALETTE.length)];
+let myEmoji = localStorage.getItem('pf_emoji') || '🙂';
 
 const remotes = new Map();   // sessionId -> { group, character, mixer, actions, current, pos, rot, anim }
 let room = null;
@@ -865,6 +881,49 @@ function tintCharacter(charObj, colorHex) {
   });
 }
 
+// ---------- emoji face ----------
+// The gold face plate is recolored to black in the texture (above); we render the
+// chosen emoji onto a small quad sitting on the head's front face.
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function makeEmojiTexture(emoji) {
+  const S = 128;
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#000'; roundRect(x, 2, 2, S - 4, S - 4, 24); x.fill();   // black screen
+  x.font = '100px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(emoji || '🙂', S / 2, S / 2 + 12);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+// Place / update an emoji plate on a character's face (parented to the 'torso' mesh
+// so it inherits the head's transform and follows the model).
+function setFace(charObj, emoji) {
+  let plate = charObj.userData._facePlate;
+  if (!plate) {
+    let torso = null;
+    charObj.traverse(o => { if (o.name === 'torso') torso = o; });
+    if (!torso) return;
+    plate = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.36, 0.36),
+      new THREE.MeshBasicMaterial({ transparent: true, toneMapped: false }),
+    );
+    plate.position.set(0, 0.33, 0.339);   // front of the head, just proud of the surface
+    torso.add(plate);
+    charObj.userData._facePlate = plate;
+  }
+  if (plate.material.map) plate.material.map.dispose();
+  plate.material.map = makeEmojiTexture(emoji);
+  plate.material.needsUpdate = true;
+}
+
 // A floating DOM name tag, anchored just above the character's head.
 function makeNameTag(text) {
   const div = document.createElement('div');
@@ -882,6 +941,7 @@ function makeRemoteAvatar(player) {
   const char = cloneSkeleton(cache['character'].scene);
   prepMesh(char);
   tintCharacter(char, player.color);
+  setFace(char, player.emoji);
   // Drop feet to the group origin, same as the local character.
   group.add(char);
   group.updateMatrixWorld(true);
@@ -896,7 +956,7 @@ function makeRemoteAvatar(player) {
 
   scene.add(group);
   const r = { group, character: char, mixer, actions, current: null, nameTag,
-              color: player.color, name: player.name,
+              color: player.color, name: player.name, emoji: player.emoji,
               pos: new THREE.Vector3(player.x, player.y, player.z),
               rot: player.rot || 0, anim: player.anim || 'idle' };
   group.position.copy(r.pos);
@@ -922,7 +982,7 @@ function removeRemote(sessionId) {
 async function connectMultiplayer() {
   try {
     const client = new Client(SERVER_URL);
-    room = await client.joinOrCreate('game', { name: myName, color: myColor });
+    room = await client.joinOrCreate('game', { name: myName, color: myColor, emoji: myEmoji });
     const $ = getStateCallbacks(room);
 
     $(room.state).players.onAdd((player, sessionId) => {
@@ -935,6 +995,7 @@ async function connectMultiplayer() {
         r.anim = player.anim;
         if (player.color !== r.color) { r.color = player.color; tintCharacter(r.character, player.color); }
         if (player.name !== r.name) { r.name = player.name; r.nameTag.element.textContent = player.name || 'Player'; }
+        if (player.emoji !== r.emoji) { r.emoji = player.emoji; setFace(r.character, player.emoji); }
       });
     });
     $(room.state).players.onRemove((player, sessionId) => removeRemote(sessionId));
@@ -998,7 +1059,7 @@ function savePlayer() {
   if (!db) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    db.transact(db.tx.players[myId].update({ name: myName, color: myColor >>> 0, totalCoins }));
+    db.transact(db.tx.players[myId].update({ name: myName, color: myColor >>> 0, emoji: myEmoji, totalCoins }));
   }, 600);
 }
 
@@ -1061,13 +1122,14 @@ const nameInput = document.getElementById('nameInput');
 const swatchWrap = document.getElementById('swatches');
 nameInput.value = myName;
 
-// Tint our own avatar immediately so the color choice is visible.
+// Tint our own avatar + draw our emoji face immediately.
 tintCharacter(character, myColor);
+setFace(character, myEmoji);
 
-// Tell the server our name/color (no-op until the room connects; the join options
-// already carry the initial values, so this only matters for live changes).
+// Tell the server our name/color/emoji (no-op until the room connects; the join
+// options already carry the initial values, so this only matters for live changes).
 function broadcastProfile() {
-  if (room) room.send('profile', { name: myName, color: myColor });
+  if (room) room.send('profile', { name: myName, color: myColor, emoji: myEmoji });
 }
 
 let selectedSwatch = null;
@@ -1093,6 +1155,26 @@ nameInput.addEventListener('input', () => {
   broadcastProfile();
   savePlayer();
 });
+
+// Emoji face picker — a button showing the current emoji that opens the
+// <emoji-picker> web component (full library: search, categories, skin tones).
+const emojiBtn = document.getElementById('emojiBtn');
+const emojiPicker = document.getElementById('emojiPicker');
+emojiBtn.textContent = myEmoji;
+emojiPicker.addEventListener('emoji-click', (e) => {
+  myEmoji = e.detail.unicode;
+  localStorage.setItem('pf_emoji', myEmoji);
+  emojiBtn.textContent = myEmoji;
+  emojiPicker.hidden = true;
+  setFace(character, myEmoji);
+  broadcastProfile();
+  savePlayer();
+});
+emojiBtn.addEventListener('click', () => { emojiPicker.hidden = !emojiPicker.hidden; });
+// Close the picker when clicking elsewhere.
+addEventListener('pointerdown', (e) => {
+  if (!emojiPicker.hidden && !emojiPicker.contains(e.target) && e.target !== emojiBtn) emojiPicker.hidden = true;
+}, true);
 
 // ---------- loop ----------
 const timer = new THREE.Timer();

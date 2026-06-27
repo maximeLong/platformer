@@ -22,6 +22,7 @@ defineTypes(Player, {
   anim: 'string',    // 'idle' | 'walk' | 'jump'
   name: 'string',
   color: 'uint32',   // hex tint, e.g. 0x8a5cff
+  emoji: 'string',   // face emoji
 });
 
 class GameState extends Schema {
@@ -57,6 +58,7 @@ class GameRoom extends Room {
       if (!p || !data) return;
       if (typeof data.name === 'string') p.name = data.name.slice(0, 24);
       if (typeof data.color === 'number') p.color = data.color >>> 0;
+      if (typeof data.emoji === 'string') p.emoji = data.emoji.slice(0, 8);
     });
   }
 
@@ -65,6 +67,7 @@ class GameRoom extends Room {
     p.x = 0; p.y = 1.5; p.z = 0; p.rot = 0; p.anim = 'idle';
     p.name = (options.name || 'Player').slice(0, 24);
     p.color = (options.color >>> 0) || 0xffffff;
+    p.emoji = (typeof options.emoji === 'string' ? options.emoji : '🙂').slice(0, 8);
     this.state.players.set(client.sessionId, p);
     console.log(`+ ${client.sessionId} joined (${this.state.players.size} in room)`);
   }
