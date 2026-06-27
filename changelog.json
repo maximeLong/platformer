@@ -48,6 +48,10 @@
     {
       "date": 1782581859,
       "summary": "Refined name tags to match the reference exactly: removed the navy border, smaller text (11px), and a small white arrow floating detached below the pill (gap, not connected). Raised the tag higher above the head (PLAYER.height +0.15 -> +0.35). Verified in-browser; no errors."
+    },
+    {
+      "date": 1782586215,
+      "summary": "Player color now recolors ONLY the default-purple suit instead of emissive-tinting the whole model. The character is a single shared texture atlas (Kenney colormap), so tintCharacter now bakes a per-color copy of the atlas: detects the suit's bluish-violet purple by hue (B > R > G and B-G > 60 — catches the whole shaded gradient ~#623ebb..#a878e8, excludes face/white/skin/blue/etc.) and recolors it to the chosen color while preserving each pixel's brightness (factor = maxChannel/232) so the baked shading survives. Result cached per color (CanvasTexture, sRGB, nearest, flipY=false) and swapped onto each character instance's cloned material. Verified: full suit recolors with shading intact, face/torso/stalk unchanged; no errors."
     }
   ]
 }

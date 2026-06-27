@@ -257,6 +257,46 @@ function load(name) {
 }
 await Promise.all(ASSETS.map(load));
 
+// ---------- player recoloring ----------
+// The character is a single shared texture atlas (Kenney's colormap), so we recolor
+// ONLY the default-purple suit region rather than tinting the whole model. We bake a
+// per-color copy of the atlas with the purple palette cell swapped for the chosen
+// color (in sRGB pixel space — exact), then swap that texture onto the character.
+const colormapImg = new Image();
+colormapImg.src = 'models/Textures/colormap.png';
+await colormapImg.decode();
+
+const recolorCache = new Map();        // colorHex -> CanvasTexture
+function makeRecoloredColormap(colorHex) {
+  const key = colorHex >>> 0;
+  if (recolorCache.has(key)) return recolorCache.get(key);
+  const cv = document.createElement('canvas');
+  cv.width = colormapImg.width; cv.height = colormapImg.height;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(colormapImg, 0, 0);
+  const img = ctx.getImageData(0, 0, cv.width, cv.height);
+  const d = img.data;
+  const tr = (key >> 16) & 255, tg = (key >> 8) & 255, tb = key & 255;
+  // The suit purple is a shaded gradient cell (~#623ebb dark -> #a878e8 light), not a
+  // flat color, so detect it by hue (bluish-violet: B > R > G, saturated) and recolor
+  // while preserving each pixel's brightness so the baked shading survives.
+  const REF = 232;   // brightest suit-purple channel value = shading reference
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (b > r && r > g && (b - g) > 60) {
+      const f = Math.min(1, Math.max(r, g, b) / REF);
+      d[i] = tr * f; d[i + 1] = tg * f; d[i + 2] = tb * f;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false; tex.flipY = false;   // match the glTF texture orientation
+  recolorCache.set(key, tex);
+  return tex;
+}
+
 function prepMesh(obj) {
   obj.traverse(o => {
     if (o.isMesh) {
@@ -815,12 +855,12 @@ const SEND_HZ = 20;
 // Tint a character's materials by emissive color so players are visually distinct.
 // Clones the (shared) material once per mesh, then just updates the color thereafter.
 function tintCharacter(charObj, colorHex) {
-  const tint = new THREE.Color((colorHex || 0xffffff) >>> 0);
+  const tex = makeRecoloredColormap((colorHex || 0xffffff) >>> 0);
   charObj.traverse(o => {
-    if (o.isMesh && o.material) {
+    if (o.isMesh && o.material && o.material.map) {
       if (!o.userData._tintClone) { o.material = o.material.clone(); o.userData._tintClone = true; }
-      o.material.emissive = tint;
-      o.material.emissiveIntensity = 0.4;
+      o.material.map = tex;          // only the purple suit cell is recolored
+      o.material.needsUpdate = true;
     }
   });
 }
