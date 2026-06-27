@@ -873,6 +873,7 @@ const SEND_HZ = 20;
 function tintCharacter(charObj, colorHex) {
   const tex = makeRecoloredColormap((colorHex || 0xffffff) >>> 0);
   charObj.traverse(o => {
+    if (o.userData._isFacePlate) return;   // leave the emoji plate alone
     if (o.isMesh && o.material && o.material.map) {
       if (!o.userData._tintClone) { o.material = o.material.clone(); o.userData._tintClone = true; }
       o.material.map = tex;          // only the purple suit cell is recolored
@@ -916,6 +917,7 @@ function setFace(charObj, emoji) {
       new THREE.MeshBasicMaterial({ transparent: true, toneMapped: false }),
     );
     plate.position.set(0, 0.33, 0.339);   // front of the head, just proud of the surface
+    plate.userData._isFacePlate = true;   // so tintCharacter skips it
     torso.add(plate);
     charObj.userData._facePlate = plate;
   }

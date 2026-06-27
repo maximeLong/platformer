@@ -60,6 +60,10 @@
     {
       "date": 1782588506,
       "summary": "Polished emoji plate (emoji centered via +12px baseline nudge; quad 0.4->0.36; z 0.345->0.339 to sit flush) then replaced the hardcoded 16-emoji grid with a real emoji picker library: emoji-picker-element (the <emoji-picker> web component) via esm.sh, with search / categories / skin tones. Themed to match (navy border, 14px radius, offset shadow via CSS custom props). Wired its 'emoji-click' event to the existing setFace + persist + sync; closes on outside click; keyboard guard extended so typing in its search doesn't move the player. Verified in-browser; no errors."
+    },
+    {
+      "date": 1782589023,
+      "summary": "Emoji-picker fixes: widened the popover 328->352px so the category nav row (scrollWidth 342) fits and all categories are reachable (was clipped by overflow:hidden), and moved it to bottom:75px so it no longer overlaps the identity bar. Fixed a bug where switching suit color overwrote the emoji face with the colormap atlas: the face plate is a mesh child of 'torso', so tintCharacter's traverse was swapping its texture too — now the plate is flagged userData._isFacePlate and skipped in tintCharacter. Verified: color switches keep the emoji intact; no errors."
     }
   ]
 }
