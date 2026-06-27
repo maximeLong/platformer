@@ -717,7 +717,7 @@ function updateClouds(dt) {
 //
 // Server endpoint: local Colyseus in dev, the Render deployment in production.
 // After deploying, replace RENDER_WS_URL with your service's wss:// URL.
-const RENDER_WS_URL = 'wss://platformer-server.onrender.com';
+const RENDER_WS_URL = 'wss://platformer-server-zxo4.onrender.com';
 const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
 const SERVER_URL = isLocalHost ? `ws://${location.hostname}:2567` : RENDER_WS_URL;
 

@@ -1,0 +1,6 @@
+# Vercel only hosts the static game client. Keep the server and secrets out of
+# the deployment (the admin token must never be uploaded; server/ runs on Render).
+.env
+.env.*
+server/
+node_modules/

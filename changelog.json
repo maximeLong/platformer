@@ -24,6 +24,10 @@
     {
       "date": 1782574384,
       "summary": "multiplayer stage 1 (real-time player presence) via Colyseus. Added server/ — a plain-ESM Colyseus 0.16 server (schema v3 to match colyseus.js client) with a 'game' room syncing each player's position/rotation/animation/name/color; binds 0.0.0.0:$PORT for Render. Client (index.html) connects via colyseus.js from esm.sh, renders color-tinted remote avatars with interpolation, throttles its own transform at 20Hz, and degrades gracefully to single-player if the server is unreachable. Verified locally with a bot client. Next: server-authoritative shared world (coins/platforms/bricks) + InstantDB leaderboard, then deploy server to Render."
+    },
+    {
+      "date": 1782575280,
+      "summary": "deployed the Colyseus server to Render and wired the production client to it (RENDER_WS_URL = wss://platformer-server-zxo4.onrender.com). Verified the deployed matchmaking endpoint over https and a real browser->wss->Render room join end-to-end."
     }
   ]
 }
