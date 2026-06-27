@@ -50,6 +50,14 @@ class GameRoom extends Room {
       if (typeof data.rot === 'number') p.rot = data.rot;
       if (typeof data.anim === 'string') p.anim = data.anim;
     });
+
+    // Live name/color changes from the identity picker.
+    this.onMessage('profile', (client, data) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !data) return;
+      if (typeof data.name === 'string') p.name = data.name.slice(0, 24);
+      if (typeof data.color === 'number') p.color = data.color >>> 0;
+    });
   }
 
   onJoin(client, options = {}) {

@@ -28,6 +28,26 @@
     {
       "date": 1782575280,
       "summary": "deployed the Colyseus server to Render and wired the production client to it (RENDER_WS_URL = wss://platformer-server-zxo4.onrender.com). Verified the deployed matchmaking endpoint over https and a real browser->wss->Render room join end-to-end."
+    },
+    {
+      "date": 1782579806,
+      "summary": "added a bottom name + color picker UI (8-swatch palette), persisted to localStorage. Choice tints your own avatar live and syncs to others; remote players now show floating CSS2D name tags above their heads. Server gained a 'profile' message handler for live name/color updates (needs a Render redeploy for production live-changes; initial values still flow via join options). Guarded game keys so typing your name doesn't move the character. Decided to go client-side for InstantDB (App ID only, no admin token) — leaderboard wiring is the next step; admin token can be removed from Render."
+    },
+    {
+      "date": 1782580554,
+      "summary": "client-side InstantDB integration (@instantdb/core via esm.sh, public App ID only). Stable per-player id via instantId() in localStorage. Coin counter is now a lifetime 'totalCoins' persisted to localStorage + upserted to a 'players' entity (name/color/totalCoins) on a 600ms debounce; respawn no longer resets it. Firebase-style presence via db.joinRoom('game','lobby') + publish/subscribePresence drives an online indicator. New pop-open leaderboard panel (🏆 button) lists players sorted by coins (sorted in JS, no index needed) with online/offline dot, color swatch, name, and '(you)' highlight. Live query verified end-to-end incl. multi-row sort, presence online/offline, and live add/delete. Graceful no-op if InstantDB is unreachable."
+    },
+    {
+      "date": 1782581395,
+      "summary": "Fall Guys-style UI restyle (playful mobile look). Global rounded font (ui-rounded / SF Pro Rounded). Name tags are now bubbly white-bordered purple pills sitting just above the head (lowered from +0.5 to +0.15). Leaderboard restyled as a white candy card with purple gradient header, 🥇🥈🥉 medals for the top 3, bordered online/offline dots, color swatches, gold coin icons, and a gold-highlighted 'you' row. Leaderboard button is a chunky 3D orange candy pill with a press-down active state. Name/color picker is a white rounded pill bar with a bouncy scaled-up selected swatch. Verified in-browser; no errors."
+    },
+    {
+      "date": 1782581697,
+      "summary": "Reworked the playful UI to match the Fall Guys look more closely: thick dark-navy (#1c2540) outlines on every element, cyan + magenta palette, chunky navy bottom-shadows (3D press feel), uppercase white text with navy text-shadows. Name tags are now magenta pills with a navy outline and a downward pointer triangle. Leaderboard is a cyan card with a diagonally-striped header band and white navy-outlined rows ('you' row in yellow). Picker bar and swatches gained navy outlines; selected swatch keeps the bouncy scale + yellow ring. Verified in-browser; no errors."
+    },
+    {
+      "date": 1782581859,
+      "summary": "Refined name tags to match the reference exactly: removed the navy border, smaller text (11px), and a small white arrow floating detached below the pill (gap, not connected). Raised the tag higher above the head (PLAYER.height +0.15 -> +0.35). Verified in-browser; no errors."
     }
   ]
 }

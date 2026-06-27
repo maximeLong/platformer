@@ -3,16 +3,72 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Platformer (Three.js port of Kenney Starter-Kit-3D-Platformer)</title>
+<title>Platformer</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #6ec6ff; overflow: hidden; font-family: system-ui, sans-serif; color: #fff; }
+  html, body { margin: 0; height: 100%; background: #6ec6ff; overflow: hidden; color: #fff;
+               font-family: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', system-ui, sans-serif; }
   #c { display: block; width: 100%; height: 100%; }
   #hud { position: fixed; left: 24px; top: 18px; display: flex; align-items: center; gap: 10px;
          font-size: 44px; font-weight: 800; text-shadow: 2px 2px 0 rgba(0,0,0,.35); pointer-events: none; }
   #hud .icon { width: 44px; height: 44px; background: radial-gradient(circle at 35% 30%, #ffe27a, #f0a91a 70%, #b46a00);
                border-radius: 50%; box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); }
-  #help { position: fixed; right: 16px; bottom: 12px; font: 13px/1.4 system-ui; opacity: .75; text-shadow: 1px 1px 0 rgba(0,0,0,.4); }
+  #help { position: fixed; left: 50%; bottom: 98px; transform: translateX(-50%); white-space: nowrap; text-align: center;
+          font: 13px/1.4 system-ui; opacity: .75; text-shadow: 1px 1px 0 rgba(0,0,0,.4); pointer-events: none; }
   #loader { position: fixed; inset: 0; display: grid; place-items: center; background: #6ec6ff; font-size: 22px; }
+  /* ====== Fall Guys-style UI: white border + dark ring + hard offset shadow, slight rounding, chevron ====== */
+  :root { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='16' viewBox='0 0 30 16'%3E%3Cpath d='M0 3 L15 13 L30 3' fill='none' stroke='%23ffffff' stroke-opacity='0.16' stroke-width='5'/%3E%3C/svg%3E"); }
+  /* name + color picker — white tray, slightly rounded, hard offset shadow */
+  #identity { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 10;
+              display: flex; align-items: center; gap: 14px; padding: 9px 14px; border-radius: 7px;
+              background: #fff; border: 3px solid #000000; box-shadow: 4px 5px 0 #000000b5; }
+  #identity input { width: 125px; padding: 10px 16px; border-radius: 999px; color: #1c2540; border: 3px solid #1c2540;
+                    background: #e9f6ff; font-family: inherit; font-weight: 700; font-size: 15px; outline: none; }
+  #identity input::placeholder { color: #9fb4cc; }
+  #identity input:focus { background: #fff; }
+  #swatches { display: flex; gap: 9px; }
+  #swatches button { width: 25px; height: 25px; padding: 0; border-radius: 50%; cursor: pointer;
+                     border: 3px solid #1c2540; box-shadow: 0 2px 0 rgba(28,37,64,.45);
+                     transition: transform .14s cubic-bezier(.34,1.7,.5,1); }
+  #swatches button:hover { transform: scale(1.2) translateY(-2px); }
+  #swatches button.sel { transform: scale(1.4) translateY(-3px); }
+  /* floating name tags — magenta pill, navy outline, downward pointer */
+  .nametag { position: relative; font: 800 11px/1 inherit; color: #fff; white-space: nowrap; pointer-events: none;
+             padding: 5px 11px; border-radius: 999px; letter-spacing: .2px;
+             background: #ff4fa3; box-shadow: 0 2px 6px rgba(28,37,64,.35); text-shadow: 0 1px 1px rgba(28,37,64,.4); }
+  /* a small white arrow floating just below, detached from the pill */
+  .nametag::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -13px; width: 0; height: 0;
+                    border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 7px solid #fff;
+                    filter: drop-shadow(0 2px 1px rgba(28,37,64,.3)); }
+  /* leaderboard button — white border, dark ring + hard offset shadow, slight rounding, chevron, crown */
+  #lbToggle { position: fixed; right: 18px; top: 18px; z-index: 11; cursor: pointer; color: #fff;
+              display: inline-flex; align-items: center; gap: 9px;
+              font-family: inherit; font-weight: 800; font-size: 16px; letter-spacing: 1px; text-transform: uppercase;
+              text-shadow: 0 2px 0 rgba(18,22,42,.4);
+              padding: 11px 20px; border: 3px solid #fff; border-radius: 7px;
+              background: #4fb0cf var(--chevron);
+              box-shadow: 4px 5px 0 #000000b5; transition: transform .07s, box-shadow .07s; }
+  #lbToggle:hover { filter: brightness(1.05); }
+  #lbToggle:active { transform: translate(2px, 3px); box-shadow: 1px 2px 0 #000000b5; }
+  .crown { width: 27px; height: 24px; flex: none; }
+  /* leaderboard panel — cyan card, navy outline, striped header */
+  #leaderboard { position: fixed; right: 18px; top: 80px; z-index: 11; width: 298px; max-height: 64vh;
+                 display: flex; flex-direction: column; overflow: hidden; border-radius: 7px; border: 3px solid #fff;
+                 background: #45c8ef; box-shadow: 4px 5px 0 #000000b5; }
+  #leaderboard[hidden] { display: none; }
+  .lb-title { font-family: inherit; font-weight: 800; font-size: 22px; color: #fff; text-align: center; text-transform: uppercase; letter-spacing: 1px;
+              padding: 13px; text-shadow: 0 2px 2px rgba(28,37,64,.55);
+              background: #36b9e4 var(--chevron); }
+  #lbList { padding: 9px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .lb-row { display: flex; align-items: center; gap: 8px; padding: 8px 11px; font: 800 14px inherit; color: #1c2540;
+            border-radius: 28px; border: 2px solid #1c2540; background-color: white; }
+  .lb-row.me { background: #c172ff; }
+  .lb-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; border: 2px solid #1c2540; }
+  .lb-sw { width: 19px; height: 19px; border-radius: 50%; flex: none; border: 2px solid #1c2540; }
+  .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-coins { display: flex; align-items: center; gap: 5px; }
+  .lb-coins::before { content: ''; width: 15px; height: 15px; border-radius: 50%; flex: none; border: 2px solid #1c2540;
+                      background: radial-gradient(circle at 35% 30%, #ffe27a, #f0a91a 70%, #b46a00); }
+  .lb-empty { color: #fff; font-size: 14px; padding: 14px; text-align: center; text-shadow: 0 1px 1px rgba(28,37,64,.4); }
 </style>
 <script type="importmap">
 {
@@ -21,7 +77,8 @@
     "three/webgpu": "https://unpkg.com/three@0.185.0/build/three.webgpu.js",
     "three/tsl": "https://unpkg.com/three@0.185.0/build/three.tsl.js",
     "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/",
-    "colyseus.js": "https://esm.sh/colyseus.js@0.16.22"
+    "colyseus.js": "https://esm.sh/colyseus.js@0.16.22",
+    "@instantdb/core": "https://esm.sh/@instantdb/core@1.0.49"
   }
 }
 </script>
@@ -31,6 +88,15 @@
 <canvas id="c"></canvas>
 <div id="hud"><span class="icon"></span>× <span id="coins">0</span></div>
 <div id="help">WASD move · Space jump (double-jump) · drag to rotate camera · scroll to zoom</div>
+<div id="identity">
+  <input id="nameInput" type="text" maxlength="16" placeholder="Your name" />
+  <div id="swatches"></div>
+</div>
+<button id="lbToggle"><svg class="crown" viewBox="0 0 32 28" aria-hidden="true"><path d="M4 23 L3 9 L11 16 L16 6 L21 16 L29 9 L28 23 Z" fill="#fff" stroke="#1c2540" stroke-width="2.5" stroke-linejoin="round"/><path d="M16 1.5 V5 M8.5 3.5 L10.5 6.5 M23.5 3.5 L21.5 6.5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>Leaderboard</button>
+<div id="leaderboard" hidden>
+  <div class="lb-title">Leaderboard</div>
+  <div id="lbList"></div>
+</div>
 
 <script type="module">
 import * as THREE from 'three/webgpu';
@@ -42,7 +108,9 @@ import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { Client, getStateCallbacks } from 'colyseus.js';
+import { init as instantInit, id as instantId } from '@instantdb/core';
 
 // ---------- renderer / scene / camera ----------
 const canvas = document.getElementById('c');
@@ -80,9 +148,17 @@ scene.fog = new THREE.Fog(0xcfd2ef, 50, 110);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
 camera.position.set(0, 8, 12);
 
+// A CSS2D layer over the canvas for floating player name tags (DOM-based, so it
+// works independently of the WebGPU renderer).
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(innerWidth, innerHeight);
+Object.assign(labelRenderer.domElement.style, { position: 'fixed', top: '0', left: '0', pointerEvents: 'none' });
+document.body.appendChild(labelRenderer.domElement);
+
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);   // the node pass auto-resizes with the renderer
+  labelRenderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -441,7 +517,9 @@ let gravity = 0;
 let jumpSingle = true, jumpDouble = true;
 let onFloor = false;
 let prevFloor = false;
-let coinsCollected = 0;
+// Lifetime coin total — persisted locally and to InstantDB (drives the leaderboard).
+let totalCoins = Number(localStorage.getItem('pf_coins')) || 0;
+document.getElementById('coins').textContent = String(totalCoins);
 let facing = 0;     // rotation around Y, in radians (smoothed)
 let facingTarget = 0;
 const modelScale = new THREE.Vector3(1, 1, 1);
@@ -455,8 +533,10 @@ const SPAWN = playerGroup.position.clone();
 
 // ---------- input ----------
 const keys = new Set();
-addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' && tryJump()) e.preventDefault(); });
-addEventListener('keyup',   e => keys.delete(e.code));
+// Ignore game input while typing in a text field (e.g. the name picker).
+const typing = e => e.target instanceof HTMLInputElement;
+addEventListener('keydown', e => { if (typing(e)) return; keys.add(e.code); if (e.code === 'Space' && tryJump()) e.preventDefault(); });
+addEventListener('keyup',   e => { if (typing(e)) return; keys.delete(e.code); });
 
 function axis(neg, pos) { return (keys.has(pos) ? 1 : 0) - (keys.has(neg) ? 1 : 0); }
 function tryJump() {
@@ -668,8 +748,8 @@ function respawn() {
   }
   for (const b of bricks) { b.broken = false; b.obj.visible = true; }
   for (const c of coins) { c.grabbed = false; c.obj.visible = true; }
-  coinsCollected = 0;
-  document.getElementById('coins').textContent = '0';
+  // Note: totalCoins is lifetime — respawning restores the collectible coins but
+  // does not reset your running total.
 }
 
 const _playerCenter = new THREE.Vector3();
@@ -683,8 +763,10 @@ function updateCoins(dt) {
     if (_playerCenter.distanceTo(c.obj.position) < 0.9) {
       c.grabbed = true;
       c.obj.visible = false;
-      coinsCollected++;
-      document.getElementById('coins').textContent = String(coinsCollected);
+      totalCoins++;
+      localStorage.setItem('pf_coins', String(totalCoins));
+      document.getElementById('coins').textContent = String(totalCoins);
+      savePlayer();
     }
   }
 }
@@ -721,28 +803,45 @@ const RENDER_WS_URL = 'wss://platformer-server-zxo4.onrender.com';
 const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
 const SERVER_URL = isLocalHost ? `ws://${location.hostname}:2567` : RENDER_WS_URL;
 
-const myName = 'Player-' + Math.floor(Math.random() * 1000);
-const myColor = new THREE.Color().setHSL(Math.random(), 0.65, 0.6).getHex();
+const PALETTE = [0x8a5cff, 0xff5c7a, 0xffb020, 0x33d17a, 0x29b6f6, 0xff6e3a, 0xb86bff, 0xffffff];
+let myName = localStorage.getItem('pf_name') || ('Player-' + Math.floor(Math.random() * 1000));
+let myColor = Number(localStorage.getItem('pf_color')) || PALETTE[Math.floor(Math.random() * PALETTE.length)];
 
 const remotes = new Map();   // sessionId -> { group, character, mixer, actions, current, pos, rot, anim }
 let room = null;
 let sendAccum = 0;
 const SEND_HZ = 20;
 
-// Build an avatar for a remote player: a cloned character, tinted to their color
-// so peers are visually distinct, with its own mixer so we can play their anim.
-function makeRemoteAvatar(player) {
-  const group = new THREE.Group();
-  const char = cloneSkeleton(cache['character'].scene);
-  prepMesh(char);
-  const tint = new THREE.Color(player.color || 0xffffff);
-  char.traverse(o => {
+// Tint a character's materials by emissive color so players are visually distinct.
+// Clones the (shared) material once per mesh, then just updates the color thereafter.
+function tintCharacter(charObj, colorHex) {
+  const tint = new THREE.Color((colorHex || 0xffffff) >>> 0);
+  charObj.traverse(o => {
     if (o.isMesh && o.material) {
-      o.material = o.material.clone();   // don't mutate the shared material
+      if (!o.userData._tintClone) { o.material = o.material.clone(); o.userData._tintClone = true; }
       o.material.emissive = tint;
       o.material.emissiveIntensity = 0.4;
     }
   });
+}
+
+// A floating DOM name tag, anchored just above the character's head.
+function makeNameTag(text) {
+  const div = document.createElement('div');
+  div.className = 'nametag';
+  div.textContent = text || 'Player';
+  const tag = new CSS2DObject(div);
+  tag.position.set(0, PLAYER.height + 0.35, 0);   // float a bit above the head
+  return tag;
+}
+
+// Build an avatar for a remote player: a cloned character tinted to their color,
+// its own mixer for animation, and a name tag.
+function makeRemoteAvatar(player) {
+  const group = new THREE.Group();
+  const char = cloneSkeleton(cache['character'].scene);
+  prepMesh(char);
+  tintCharacter(char, player.color);
   // Drop feet to the group origin, same as the local character.
   group.add(char);
   group.updateMatrixWorld(true);
@@ -752,8 +851,12 @@ function makeRemoteAvatar(player) {
   const actions = {};
   for (const c of cache['character'].animations) actions[c.name.toLowerCase()] = mixer.clipAction(c);
 
+  const nameTag = makeNameTag(player.name);
+  group.add(nameTag);
+
   scene.add(group);
-  const r = { group, character: char, mixer, actions, current: null,
+  const r = { group, character: char, mixer, actions, current: null, nameTag,
+              color: player.color, name: player.name,
               pos: new THREE.Vector3(player.x, player.y, player.z),
               rot: player.rot || 0, anim: player.anim || 'idle' };
   group.position.copy(r.pos);
@@ -771,6 +874,7 @@ function remotePlayAnim(r, name) {
 function removeRemote(sessionId) {
   const r = remotes.get(sessionId);
   if (!r) return;
+  if (r.nameTag) { r.group.remove(r.nameTag); r.nameTag.element.remove(); }
   scene.remove(r.group);
   remotes.delete(sessionId);
 }
@@ -789,6 +893,8 @@ async function connectMultiplayer() {
         r.pos.set(player.x, player.y, player.z);
         r.rot = player.rot;
         r.anim = player.anim;
+        if (player.color !== r.color) { r.color = player.color; tintCharacter(r.character, player.color); }
+        if (player.name !== r.name) { r.name = player.name; r.nameTag.element.textContent = player.name || 'Player'; }
       });
     });
     $(room.state).players.onRemove((player, sessionId) => removeRemote(sessionId));
@@ -832,6 +938,122 @@ function updateMultiplayer(dt) {
   }
 }
 
+// ---------- persistence + leaderboard (InstantDB) ----------
+// Client-side only: the public App ID + permission rules. Each player upserts their
+// own row (name / color / totalCoins) and publishes presence so we can show who's
+// online. Ordering is done in JS so we don't need a server-pushed index.
+const INSTANT_APP_ID = '7b3606b8-1dd4-4fe1-bdac-f49f3a469079';
+
+// A stable per-player id, reused across sessions — also the InstantDB row id.
+let myId = localStorage.getItem('pf_id');
+if (!myId) { myId = instantId(); localStorage.setItem('pf_id', myId); }
+
+let db = null;
+let lbRows = [];                  // all player rows from the live query
+let onlineIds = new Set([myId]);  // ids currently present (we're always online)
+let saveTimer = null;
+
+// Debounced upsert of our own row.
+function savePlayer() {
+  if (!db) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    db.transact(db.tx.players[myId].update({ name: myName, color: myColor >>> 0, totalCoins }));
+  }, 600);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderLeaderboard() {
+  const list = document.getElementById('lbList');
+  if (!list) return;
+  const rows = [...lbRows].sort((a, b) => (b.totalCoins || 0) - (a.totalCoins || 0));
+  if (!rows.length) { list.innerHTML = '<div class="lb-empty">No players yet</div>'; return; }
+  list.innerHTML = rows.map((p) => {
+    const online = onlineIds.has(p.id);
+    const me = p.id === myId;
+    const hex = '#' + ((p.color || 0xffffff) >>> 0).toString(16).padStart(6, '0');
+    return `<div class="lb-row${me ? ' me' : ''}">
+      <span class="lb-dot" title="${online ? 'online' : 'offline'}" style="background:${online ? '#33d17a' : '#5b5b6b'}"></span>
+      <span class="lb-sw" style="background:${hex}"></span>
+      <span class="lb-name">${escapeHtml(p.name || 'Player')}${me ? ' (you)' : ''}</span>
+      <span class="lb-coins">${p.totalCoins || 0}</span>
+    </div>`;
+  }).join('');
+}
+
+try {
+  db = instantInit({ appId: INSTANT_APP_ID });
+
+  // Live leaderboard data.
+  db.subscribeQuery({ players: {} }, (resp) => {
+    if (resp.error) { console.warn('[instant] query error:', resp.error.message); return; }
+    lbRows = resp.data?.players || [];
+    renderLeaderboard();
+  });
+
+  // Presence → who's online (auto-cleaned on disconnect).
+  const presenceRoom = db.joinRoom('game', 'lobby');
+  presenceRoom.publishPresence({ pid: myId });
+  presenceRoom.subscribePresence({}, (slice) => {
+    const ids = new Set([myId]);
+    for (const peer of Object.values(slice.peers || {})) if (peer && peer.pid) ids.add(peer.pid);
+    onlineIds = ids;
+    renderLeaderboard();
+  });
+
+  savePlayer();   // make sure our row exists / is current
+  console.log('[instant] connected; player id', myId);
+} catch (e) {
+  console.warn('[instant] unavailable — leaderboard offline.', e?.message || e);
+}
+
+// Leaderboard panel toggle.
+document.getElementById('lbToggle').addEventListener('click', () => {
+  const panel = document.getElementById('leaderboard');
+  panel.hidden = !panel.hidden;
+});
+
+// ---------- identity UI (name + color picker) ----------
+const nameInput = document.getElementById('nameInput');
+const swatchWrap = document.getElementById('swatches');
+nameInput.value = myName;
+
+// Tint our own avatar immediately so the color choice is visible.
+tintCharacter(character, myColor);
+
+// Tell the server our name/color (no-op until the room connects; the join options
+// already carry the initial values, so this only matters for live changes).
+function broadcastProfile() {
+  if (room) room.send('profile', { name: myName, color: myColor });
+}
+
+let selectedSwatch = null;
+for (const hex of PALETTE) {
+  const b = document.createElement('button');
+  b.style.background = '#' + hex.toString(16).padStart(6, '0');
+  if (hex === myColor) { b.classList.add('sel'); selectedSwatch = b; }
+  b.addEventListener('click', () => {
+    myColor = hex;
+    localStorage.setItem('pf_color', String(hex));
+    if (selectedSwatch) selectedSwatch.classList.remove('sel');
+    b.classList.add('sel'); selectedSwatch = b;
+    tintCharacter(character, myColor);
+    broadcastProfile();
+    savePlayer();
+  });
+  swatchWrap.appendChild(b);
+}
+
+nameInput.addEventListener('input', () => {
+  myName = nameInput.value.trim().slice(0, 16) || 'Player';
+  localStorage.setItem('pf_name', myName);
+  broadcastProfile();
+  savePlayer();
+});
+
 // ---------- loop ----------
 const timer = new THREE.Timer();
 document.getElementById('loader').remove();
@@ -847,6 +1069,7 @@ function frame() {
   updateMultiplayer(dt);
   mixer.update(dt);
   renderPipeline.render();
+  labelRenderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 frame();
