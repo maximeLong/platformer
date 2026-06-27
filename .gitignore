@@ -1,0 +1,11 @@
+# dependencies
+node_modules/
+
+# env / secrets — NEVER commit these (they hold the InstantDB admin token)
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+*.log

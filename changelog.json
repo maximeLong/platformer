@@ -16,6 +16,14 @@
     {
       "date": 1782570212,
       "summary": "baked hand-tuned lighting/post defaults from the GUI: exposure 1.0, sun 1.35, hemisphere 1.35, shadow softness 10; GTAO strength 0.75 / radius 0.3 / thickness 2 / samples 20; SSR intensity 0.41 / maxDistance 3 / thickness 0; bloom radius 0.6."
+    },
+    {
+      "date": 1782570786,
+      "summary": "removed screen-space reflections (SSR) — not performant and didn't suit the matte cartoon scene. Dropped the SSRNode import, the metalness/roughness MRT attachment it required, and its GUI folder. Pipeline is now GTAO + bloom + SMAA with PCF soft shadows."
+    },
+    {
+      "date": 1782574384,
+      "summary": "multiplayer stage 1 (real-time player presence) via Colyseus. Added server/ — a plain-ESM Colyseus 0.16 server (schema v3 to match colyseus.js client) with a 'game' room syncing each player's position/rotation/animation/name/color; binds 0.0.0.0:$PORT for Render. Client (index.html) connects via colyseus.js from esm.sh, renders color-tinted remote avatars with interpolation, throttles its own transform at 20Hz, and degrades gracefully to single-player if the server is unreachable. Verified locally with a bot client. Next: server-authoritative shared world (coins/platforms/bricks) + InstantDB leaderboard, then deploy server to Render."
     }
   ]
 }

@@ -20,7 +20,8 @@
     "three": "https://unpkg.com/three@0.185.0/build/three.webgpu.js",
     "three/webgpu": "https://unpkg.com/three@0.185.0/build/three.webgpu.js",
     "three/tsl": "https://unpkg.com/three@0.185.0/build/three.tsl.js",
-    "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/"
+    "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/",
+    "colyseus.js": "https://esm.sh/colyseus.js@0.16.22"
   }
 }
 </script>
@@ -33,15 +34,15 @@
 
 <script type="module">
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, metalness, roughness,
-         packNormalToRGB, unpackRGBToNormal, vec2, sample, mix, float, uniform } from 'three/tsl';
+import { pass, mrt, output, normalView,
+         packNormalToRGB, unpackRGBToNormal, sample, mix, float, uniform } from 'three/tsl';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
-import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { Client, getStateCallbacks } from 'colyseus.js';
 
 // ---------- renderer / scene / camera ----------
 const canvas = document.getElementById('c');
@@ -101,26 +102,22 @@ sun.shadow.radius = 10;      // PCF blur kernel → soft shadow edges
 scene.add(sun);
 
 // ---------- post-processing (WebGPU node pipeline) ----------
-// One scene pass with a multi-render-target: the lit color plus the G-buffer
-// (view-space normals + packed metalness/roughness) that the screen-space
-// effects below read back. Depth comes for free from the pass.
+// One scene pass with a multi-render-target: the lit color plus a view-space
+// normal buffer that the ambient-occlusion pass reads back. Depth comes for free.
 const scenePass = pass(scene, camera);
 scenePass.setMRT(mrt({
   output,
   normal: packNormalToRGB(normalView),
-  metalrough: vec2(metalness, roughness),
 }));
 
-const scenePassColor      = scenePass.getTextureNode('output');
-const scenePassDepth      = scenePass.getTextureNode('depth');
-const scenePassNormal     = scenePass.getTextureNode('normal');
-const scenePassMetalRough = scenePass.getTextureNode('metalrough');
+const scenePassColor  = scenePass.getTextureNode('output');
+const scenePassDepth  = scenePass.getTextureNode('depth');
+const scenePassNormal = scenePass.getTextureNode('normal');
 
-// The G-buffer aux targets don't need float precision — 8-bit saves bandwidth.
+// The normal buffer doesn't need float precision — 8-bit saves bandwidth.
 scenePass.getTexture('normal').type = THREE.UnsignedByteType;
-scenePass.getTexture('metalrough').type = THREE.UnsignedByteType;
 
-// World/view-space normals decoded from the packed RGB attachment.
+// View-space normals decoded from the packed RGB attachment.
 const sceneNormal = sample((uv) => unpackRGBToNormal(scenePassNormal.sample(uv)));
 
 // GTAO — ground-truth screen-space ambient occlusion for contact shadows.
@@ -130,19 +127,10 @@ aoPass.distanceExponent.value = 1;
 aoPass.thickness.value = 2;
 aoPass.samples.value = 20;
 
-// Screen-space reflections off glossy / metallic surfaces.
-const ssrPass = ssr(scenePassColor, scenePassDepth, sceneNormal, {
-  metalnessNode: scenePassMetalRough.r,
-  roughnessNode: scenePassMetalRough.g,
-});
-ssrPass.maxDistance.value = 3;
-ssrPass.intensity.value = 0.41;
-ssrPass.thickness.value = 0;
-
-// Compose: beauty × AO + reflections, then bloom on the result, SMAA to resolve.
+// Compose: beauty × AO, then bloom on the result, SMAA to resolve.
 // aoStrength is a live uniform so the GUI can dial occlusion from 0 (off) to 2.
 const aoStrength = uniform(0.75);
-const litColor  = scenePassColor.mul(mix(float(1), aoPass.r, aoStrength)).add(ssrPass.rgb);
+const litColor  = scenePassColor.mul(mix(float(1), aoPass.r, aoStrength));
 const bloomPass = bloom(litColor, 0.5, 0.6, 0.8);   // (strength, radius, threshold)
 
 const renderPipeline = new THREE.RenderPipeline(renderer);
@@ -153,6 +141,9 @@ addEventListener('resize', resize); resize();
 // ---------- debug GUI (lil-gui) ----------
 // Live controls for the lighting/post stack. Effects are driven through their node
 // uniforms, so nothing here rebuilds the pipeline — changes apply on the next frame.
+// Flip SHOW_GUI to true to bring the on-screen tuning panel back.
+const SHOW_GUI = false;
+if (SHOW_GUI) {
 const gui = new GUI({ title: 'Lighting / Post' });
 
 const fLight = gui.addFolder('Lighting');
@@ -168,17 +159,13 @@ fAO.add(aoPass.thickness, 'value', 0, 2, 0.01).name('thickness');
 fAO.add(aoPass.distanceExponent, 'value', 1, 4, 0.1).name('falloff exponent');
 fAO.add(aoPass.samples, 'value', 4, 32, 1).name('samples');
 
-const fSSR = gui.addFolder('Reflections (SSR)');
-fSSR.add(ssrPass.intensity, 'value', 0, 1, 0.01).name('intensity');
-fSSR.add(ssrPass.maxDistance, 'value', 0, 3, 0.01).name('max distance');
-fSSR.add(ssrPass.thickness, 'value', 0, 0.2, 0.001).name('thickness');
-
 const fBloom = gui.addFolder('Bloom');
 fBloom.add(bloomPass.strength, 'value', 0, 3, 0.01).name('strength');
 fBloom.add(bloomPass.radius, 'value', 0, 1, 0.01).name('radius');
 fBloom.add(bloomPass.threshold, 'value', 0, 1, 0.01).name('threshold');
 
 gui.close();   // start collapsed so it doesn't cover the scene
+}
 
 // ---------- asset loading ----------
 const loader = new GLTFLoader();
@@ -723,6 +710,128 @@ function updateClouds(dt) {
   }
 }
 
+// ---------- multiplayer (Colyseus) ----------
+// Stage 1: presence. We push our own transform to the server ~20x/sec and render
+// every other player's avatar from the synced room state. Connection failure is
+// non-fatal — the game stays fully playable single-player if the server is down.
+//
+// Server endpoint: local Colyseus in dev, the Render deployment in production.
+// After deploying, replace RENDER_WS_URL with your service's wss:// URL.
+const RENDER_WS_URL = 'wss://platformer-server.onrender.com';
+const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
+const SERVER_URL = isLocalHost ? `ws://${location.hostname}:2567` : RENDER_WS_URL;
+
+const myName = 'Player-' + Math.floor(Math.random() * 1000);
+const myColor = new THREE.Color().setHSL(Math.random(), 0.65, 0.6).getHex();
+
+const remotes = new Map();   // sessionId -> { group, character, mixer, actions, current, pos, rot, anim }
+let room = null;
+let sendAccum = 0;
+const SEND_HZ = 20;
+
+// Build an avatar for a remote player: a cloned character, tinted to their color
+// so peers are visually distinct, with its own mixer so we can play their anim.
+function makeRemoteAvatar(player) {
+  const group = new THREE.Group();
+  const char = cloneSkeleton(cache['character'].scene);
+  prepMesh(char);
+  const tint = new THREE.Color(player.color || 0xffffff);
+  char.traverse(o => {
+    if (o.isMesh && o.material) {
+      o.material = o.material.clone();   // don't mutate the shared material
+      o.material.emissive = tint;
+      o.material.emissiveIntensity = 0.4;
+    }
+  });
+  // Drop feet to the group origin, same as the local character.
+  group.add(char);
+  group.updateMatrixWorld(true);
+  char.position.y -= new THREE.Box3().setFromObject(char).min.y;
+
+  const mixer = new THREE.AnimationMixer(char);
+  const actions = {};
+  for (const c of cache['character'].animations) actions[c.name.toLowerCase()] = mixer.clipAction(c);
+
+  scene.add(group);
+  const r = { group, character: char, mixer, actions, current: null,
+              pos: new THREE.Vector3(player.x, player.y, player.z),
+              rot: player.rot || 0, anim: player.anim || 'idle' };
+  group.position.copy(r.pos);
+  return r;
+}
+
+function remotePlayAnim(r, name) {
+  const a = r.actions[name] || r.actions[Object.keys(r.actions)[0]];
+  if (!a || a === r.current) return;
+  if (r.current) r.current.fadeOut(0.15);
+  a.reset().fadeIn(0.15).play();
+  r.current = a;
+}
+
+function removeRemote(sessionId) {
+  const r = remotes.get(sessionId);
+  if (!r) return;
+  scene.remove(r.group);
+  remotes.delete(sessionId);
+}
+
+async function connectMultiplayer() {
+  try {
+    const client = new Client(SERVER_URL);
+    room = await client.joinOrCreate('game', { name: myName, color: myColor });
+    const $ = getStateCallbacks(room);
+
+    $(room.state).players.onAdd((player, sessionId) => {
+      if (sessionId === room.sessionId) return;   // that's us — skip
+      const r = makeRemoteAvatar(player);
+      remotes.set(sessionId, r);
+      $(player).onChange(() => {
+        r.pos.set(player.x, player.y, player.z);
+        r.rot = player.rot;
+        r.anim = player.anim;
+      });
+    });
+    $(room.state).players.onRemove((player, sessionId) => removeRemote(sessionId));
+
+    room.onLeave(() => {
+      for (const id of [...remotes.keys()]) removeRemote(id);
+      room = null;
+    });
+
+    console.log(`[mp] connected to ${SERVER_URL} as ${room.sessionId}`);
+  } catch (e) {
+    console.warn('[mp] multiplayer server unavailable — running single-player.', e?.message || e);
+    room = null;
+  }
+}
+connectMultiplayer();
+
+function updateMultiplayer(dt) {
+  // Push our transform at a fixed rate.
+  if (room) {
+    sendAccum += dt;
+    if (sendAccum >= 1 / SEND_HZ) {
+      sendAccum = 0;
+      const hSpeed = Math.hypot(vel.x, vel.z);
+      room.send('move', {
+        x: playerGroup.position.x,
+        y: playerGroup.position.y,
+        z: playerGroup.position.z,
+        rot: facing,
+        anim: !onFloor ? 'jump' : (hSpeed > 0.5 ? 'walk' : 'idle'),
+      });
+    }
+  }
+  // Smoothly interpolate remote avatars toward their last reported state.
+  for (const r of remotes.values()) {
+    r.group.position.lerp(r.pos, Math.min(1, dt * 12));
+    let d = ((r.rot - r.character.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+    r.character.rotation.y += d * Math.min(1, dt * 12);
+    remotePlayAnim(r, r.anim || 'idle');
+    r.mixer.update(dt);
+  }
+}
+
 // ---------- loop ----------
 const timer = new THREE.Timer();
 document.getElementById('loader').remove();
@@ -735,6 +844,7 @@ function frame() {
   updateClouds(dt);
   updateDust(dt);
   updateCamera(dt);
+  updateMultiplayer(dt);
   mixer.update(dt);
   renderPipeline.render();
   requestAnimationFrame(frame);
