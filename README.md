@@ -60,4 +60,3 @@ The client and server deploy separately (Colyseus needs a stateful host):
 1. Copy `.env.example` to `.env` to set up a fresh checkout.
 2. **App ID** is a public client identifier (safe to embed in `index.html`).
 3. **admin token** is a server-only secret (set it in Render's dashboard).
-

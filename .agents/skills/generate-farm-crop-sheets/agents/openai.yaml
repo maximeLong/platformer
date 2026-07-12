@@ -1,0 +1,4 @@
+interface:
+  display_name: "Farm Crop Sprite Sheets"
+  short_description: "Generate standardized 4x4 farm crop sheets"
+  default_prompt: "Use $generate-farm-crop-sheets to create a four-crop sprite sheet with four standardized states per crop."
